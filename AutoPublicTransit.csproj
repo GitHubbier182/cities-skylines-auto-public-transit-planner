@@ -1,0 +1,84 @@
+<Project ToolsVersion="4.0" DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+
+  <PropertyGroup>
+    <Configuration Condition=" '$(Configuration)' == '' ">Release</Configuration>
+    <Platform Condition=" '$(Platform)' == '' ">AnyCPU</Platform>
+    <ProjectGuid>{A1B2C3D4-E5F6-47A8-9B10-112233445566}</ProjectGuid>
+    <OutputType>Library</OutputType>
+    <RootNamespace>AutoPublicTransit</RootNamespace>
+    <AssemblyName>AutoPublicTransit</AssemblyName>
+    <TargetFrameworkVersion>v3.5</TargetFrameworkVersion>
+    <LangVersion>7.3</LangVersion>
+
+    <!-- Disable NuGet restore (Mono tries to run it otherwise) -->
+    <RestoreProjectStyle>None</RestoreProjectStyle>
+    <RestorePackages>false</RestorePackages>
+    <EnableNuGetPackageRestore>false</EnableNuGetPackageRestore>
+    <ResolveNuGetPackages>false</ResolveNuGetPackages>
+    <RestoreTargets> </RestoreTargets>
+
+    <Optimize>true</Optimize>
+    <WarningLevel>4</WarningLevel>
+    <OutputPath>bin\$(Configuration)\</OutputPath>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+  </PropertyGroup>
+
+  <!-- macOS Steam install paths -->
+  <ItemGroup>
+    <Reference Include="Assembly-CSharp">
+      <HintPath>$(HOME)/Library/Application Support/Steam/steamapps/common/Cities_Skylines/Cities.app/Contents/Resources/Data/Managed/Assembly-CSharp.dll</HintPath>
+    </Reference>
+    <Reference Include="ColossalManaged">
+      <HintPath>$(HOME)/Library/Application Support/Steam/steamapps/common/Cities_Skylines/Cities.app/Contents/Resources/Data/Managed/ColossalManaged.dll</HintPath>
+    </Reference>
+    <Reference Include="ICities">
+      <HintPath>$(HOME)/Library/Application Support/Steam/steamapps/common/Cities_Skylines/Cities.app/Contents/Resources/Data/Managed/ICities.dll</HintPath>
+    </Reference>
+    <Reference Include="UnityEngine">
+      <HintPath>$(HOME)/Library/Application Support/Steam/steamapps/common/Cities_Skylines/Cities.app/Contents/Resources/Data/Managed/UnityEngine.dll</HintPath>
+    </Reference>
+    <Reference Include="UnityEngine.UI">
+      <HintPath>$(HOME)/Library/Application Support/Steam/steamapps/common/Cities_Skylines/Cities.app/Contents/Resources/Data/Managed/UnityEngine.UI.dll</HintPath>
+    </Reference>
+
+    <Reference Include="System" />
+    <Reference Include="System.Core" />
+  </ItemGroup>
+
+  <!-- Split source files -->
+  <ItemGroup>
+    <Compile Include="Core/AutoPublicTransitMod.cs" />
+    <Compile Include="Core/AutoPublicTransitConfig.cs" />
+    <Compile Include="Core/ConfigManager.cs" />
+    <Compile Include="Core/TransitLogging.cs" />
+    <Compile Include="Core/State.cs" />
+    <Compile Include="Core/TransitVehicleSpawnDelayCompatibility.cs" />
+    <Compile Include="Core/Geometry.cs" />
+    <Compile Include="Core/BusStopLocator.cs" />
+    <Compile Include="Core/BusEconomicsAdvisor.cs" />
+    <Compile Include="Core/TransitPolicyHelper.cs" />
+    <Compile Include="Core/Util.cs" />
+    <Compile Include="Demand/DemandNode.cs" />
+    <Compile Include="Demand/DemandGrid.cs" />
+    <Compile Include="Routing/ExistingLineSnapshot.cs" />
+    <Compile Include="Routing/RouteShapeAnalyzer.cs" />
+    <Compile Include="Routing/TransitRouteBuilder.cs" />
+    <Compile Include="UI/UIHelpers.cs" />
+    <Compile Include="UI/AutoPublicTransitUI.cs" />
+    <Compile Include="UI/UnifiedTransitLauncherToolbar.cs" />
+    <Compile Include="UI/AutoPublicTransitLauncherButton.cs" />
+    <Compile Include="Lifecycle/AutoPublicTransitLoading.cs" />
+    <Compile Include="Lifecycle/AutoPublicTransitThreading.cs" />
+    <Compile Include="Manager/Manager.Core.cs" />
+    <Compile Include="Manager/Manager.LineBuilding.cs" />
+    <Compile Include="Manager/Manager.BusLaneRecommendations.cs" />
+    <Compile Include="Manager/Manager.RoadUpgrades.cs" />
+    <Compile Include="Manager/Manager.Maintenance.cs" />
+    <Compile Include="Manager/Manager.Depots.cs" />
+    <Compile Include="Manager/Manager.DemandSources.cs" />
+  </ItemGroup>
+
+  <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
+
+</Project>

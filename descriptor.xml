@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ModMetaData>
+  <name>Auto Public Transit Planner</name>
+  <author>ScratchyBald</author>
+  <version>1.0.2</version>
+  <assembly>AutoPublicTransit.dll</assembly>
+  <description>Scans city demand, builds and maintains complete bus routes, links transit hubs and tourist anchors, and gives depot/economics guidance. Bus-lane road upgrades and non-bus modes are marked in development.</description>
+  <url></url>
+  <tags>Transport;Automation;Bus;Transit;Planning;Public Transport</tags>
+  <enabled>true</enabled>
+  <supportedVersions>
+    <version>1.0</version>
+  </supportedVersions>
+</ModMetaData>

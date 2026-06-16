@@ -17,6 +17,7 @@ namespace AutoPublicTransit
         public static List<List<Vector3>> LastRoutes;
         public static TransitScanSummary LastScanSummary;
         public static BusEconomicsSummary LastBusEconomicsSummary;
+        public static BusSpawnHealthSummary LastBusSpawnHealthSummary;
         public static List<BusLaneUpgradeRecommendation> LastBusLaneRecommendations = new List<BusLaneUpgradeRecommendation>();
         public static Dictionary<ushort, CachedStopMatch> StopCache = new Dictionary<ushort, CachedStopMatch>();
         public static bool TransitVehicleSpawnDelayWarningShown;
@@ -28,6 +29,7 @@ namespace AutoPublicTransit
             LastRoutes = null;
             LastScanSummary = null;
             LastBusEconomicsSummary = null;
+            LastBusSpawnHealthSummary = null;
             LastBusLaneRecommendations = new List<BusLaneUpgradeRecommendation>();
             StopCache.Clear();
             TransitVehicleSpawnDelayWarningShown = false;
@@ -70,6 +72,28 @@ namespace AutoPublicTransit
         public int AdditionalUsefulLinesBeforeDepotPressure;
         public bool DepotCapacityLooksSufficient;
         public string DepotSufficiencyNote;
+        public string Recommendation;
+    }
+
+    public class BusSpawnHealthSummary
+    {
+        public int CreatedLineCount;
+        public int CheckedLineCount;
+        public int CompleteLineCount;
+        public int TargetVehicleCount;
+        public int AssignedVehicleCount;
+        public int ActiveVehicleCount;
+        public int WaitingPathVehicleCount;
+        public int LinesWithTargetVehicles;
+        public int LinesWithoutVehicles;
+        public int LinesBelowTarget;
+        public int LinesOnlyWaitingPathVehicles;
+        public int DepotCount;
+        public int DepotProblemCount;
+        public bool TransitVehicleSpawnDelayActive;
+        public bool TransitVehicleSpawnDelaySettingKnown;
+        public uint TransitVehicleSpawnDelayBusDelay;
+        public bool NeedsPlayerAttention;
         public string Recommendation;
     }
 
@@ -129,6 +153,7 @@ namespace AutoPublicTransit
         public int GeneratedRoutesIntegrityFailed;
         public int GeneratedStopsSkipped;
         public int ClosureBackoffs;
+        public List<ushort> CreatedLineIds = new List<ushort>();
         public int BusLaneRecommendationCount;
         public BusEconomicsSummary BusEconomicsSummary;
     }

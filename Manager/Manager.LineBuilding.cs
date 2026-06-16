@@ -138,6 +138,10 @@ namespace AutoPublicTransit
                 scanSummary.GeneratedRoutesIntegrityFailed = integrityFailedRoutes;
                 scanSummary.GeneratedStopsSkipped = 0;
                 scanSummary.ClosureBackoffs = 0;
+                if (scanSummary.CreatedLineIds == null)
+                    scanSummary.CreatedLineIds = new List<ushort>();
+                else
+                    scanSummary.CreatedLineIds.Clear();
             }
 
             if (preparedProbes == 0)
@@ -575,6 +579,9 @@ namespace AutoPublicTransit
                     scanSummary.CreatedLines++;
                     scanSummary.GeneratedStopsSkipped += probe.SkippedStops;
                     scanSummary.ClosureBackoffs += probe.ClosureBackoffs;
+                    if (scanSummary.CreatedLineIds == null)
+                        scanSummary.CreatedLineIds = new List<ushort>();
+                    scanSummary.CreatedLineIds.Add(promoteResult.LineId);
                     if (probe.Adjusted)
                         scanSummary.RepairedGeneratedLines++;
                 }

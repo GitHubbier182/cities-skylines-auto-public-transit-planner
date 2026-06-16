@@ -13,6 +13,7 @@ The mod scans city demand, links useful destinations, builds complete bus lines 
 - Existing-line maintenance that avoids disruptive deletion of usable live service.
 - Depot count guidance after scans.
 - Bus economics guidance informed by ridership, vehicles, depots, useful lines, and free-transport policy.
+- Delayed bus dispatch health checks for newly created lines, with warnings when depot dispatch or vehicle spawning still looks blocked after settling.
 - Unified launcher toolbar support shared with the ScratchyBald Cities: Skylines mod family.
 
 ## In Development
@@ -30,13 +31,22 @@ The planner focuses on complete, usable bus routes. After a scan, review the Ove
 
 Transit Vehicle Spawn Delay can slow first vehicle dispatch on newly created APT bus lines. If APT warns about it after creating lines, set that mod's Bus spawning delay to 1 or lower, or temporarily disable it, until the new services have spawned their first buses and are running normally.
 
+Existing bus lines can keep running with buses that are already on the road even when new line dispatch is blocked. If APT warns that new lines still have no assigned or only path-waiting buses after settling, check powered and connected bus depots, vehicle limits, traffic near depots, and transport or vehicle-spawn mods.
+
 Improved Public Transport Essentials/IPTE is different: its spawn delay separates new lines from established lines, so it should not need to be turned off for APT-created services to start.
 
 ## Release Notes
 
-Version 1.0.2 is a bug-fix release for the bus planner.
+Version 1.0.3 is a bug-fix release for the bus planner.
 
-This release adds safer bus-planning defaults, a Bus Options reset button, clearer scan-mode wording, initial-network scan warnings, generated stop editability fixes, and Transit Vehicle Spawn Delay compatibility guidance. Bus-lane road upgrades remain parked for a later release.
+This release adds delayed bus dispatch health checks after APT creates new bus
+lines. If vanilla dispatch still has no assigned buses, only path-waiting buses,
+depot warnings, or a risky Transit Vehicle Spawn Delay setup after the lines
+settle, APT now shows a player-facing advisory with practical next steps.
+
+Version 1.0.2 was a bug-fix release for the bus planner.
+
+That release added safer bus-planning defaults, a Bus Options reset button, clearer scan-mode wording, initial-network scan warnings, generated stop editability fixes, and Transit Vehicle Spawn Delay compatibility guidance. Bus-lane road upgrades remain parked for a later release.
 
 ## Credits
 

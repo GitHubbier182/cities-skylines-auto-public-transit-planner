@@ -249,7 +249,8 @@ namespace AutoPublicTransit
                 " for the current bus network.\n\n" +
                 "Current depots: " + economics.DepotCount + "\n" +
                 "Recommended depots: " + economics.RecommendedDepotCount + "\n" +
-                "Place " + missing + " more bus " + Plural(missing, "depot", "depots") + ".";
+                "Place " + missing + " more bus " + Plural(missing, "depot", "depots") + ".\n\n" +
+                "Existing bus lines can keep running with buses that are already on the road, but new APT lines still need a working depot to dispatch fresh buses.";
 
             try
             {
@@ -282,12 +283,16 @@ namespace AutoPublicTransit
             if (!TransitVehicleSpawnDelayCompatibility.TryGetActiveStatus(out status) || status == null || !status.IsActive)
                 return;
 
-            if (!status.HasBusDelay || status.BusDelay <= 1u)
+            bool unknownDelay = !status.HasBusDelay;
+            bool highDelay = status.HasBusDelay && status.BusDelay > 1u;
+            if (!unknownDelay && !highDelay)
                 return;
 
             State.TransitVehicleSpawnDelayWarningShown = true;
             int delaySeconds = status.BusDelay > int.MaxValue ? int.MaxValue : (int)status.BusDelay;
-            string delayLine = "\n\nDetected bus delay setting: " + status.BusDelay + " normal-speed " + Plural(delaySeconds, "second", "seconds") + ".";
+            string delayLine = unknownDelay
+                ? "\n\nAPT detected the mod, but could not read its Bus spawning delay setting."
+                : "\n\nDetected bus delay setting: " + status.BusDelay + " normal-speed " + Plural(delaySeconds, "second", "seconds") + ".";
             string message =
                 "APT created " + summary.CreatedLines + " new bus " + Plural(summary.CreatedLines, "line", "lines") + ", but Transit Vehicle Spawn Delay is active." +
                 delayLine +
@@ -314,6 +319,42 @@ namespace AutoPublicTransit
             {
                 State.TransitVehicleSpawnDelayWarningShown = false;
                 TransitLogging.Warn("Failed to display Transit Vehicle Spawn Delay advisory: " + e.Message);
+            }
+        }
+
+        public static void ShowBusSpawnHealthDialogIfNeeded(BusSpawnHealthSummary health)
+        {
+            if (health == null || !health.NeedsPlayerAttention)
+                return;
+
+            string title = "Bus Dispatch Check";
+            string message =
+                "APT built " + health.CreatedLineCount + " new bus " + Plural(health.CreatedLineCount, "line", "lines") + ", but after a settling period vanilla dispatch still looks blocked or delayed.\n\n" +
+                "Lines without assigned buses: " + health.LinesWithoutVehicles + "\n" +
+                "Lines with only path-waiting buses: " + health.LinesOnlyWaitingPathVehicles + "\n" +
+                "Current bus depots: " + health.DepotCount + "\n" +
+                "Depots with warning icons: " + health.DepotProblemCount + "\n\n" +
+                (string.IsNullOrEmpty(health.Recommendation) ? "Check bus depots, vehicle limits, and transport mods." : health.Recommendation);
+
+            try
+            {
+                if (UIView.library != null)
+                {
+                    ExceptionPanel panel = UIView.library.ShowModal<ExceptionPanel>("ExceptionPanel");
+                    if (panel != null)
+                    {
+                        panel.SetMessage(title, message, false);
+                        TransitLogging.Warn("Displayed bus dispatch health advisory after creating " + health.CreatedLineCount + " bus lines.");
+                        return;
+                    }
+                }
+
+                ConfirmPanel.ShowModal(title, message, null);
+                TransitLogging.Warn("Displayed fallback bus dispatch health advisory after creating " + health.CreatedLineCount + " bus lines.");
+            }
+            catch (Exception e)
+            {
+                TransitLogging.Warn("Failed to display bus dispatch health advisory: " + e.Message);
             }
         }
 

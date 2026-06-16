@@ -72,6 +72,7 @@
     <Compile Include="Lifecycle/AutoPublicTransitThreading.cs" />
     <Compile Include="Manager/Manager.Core.cs" />
     <Compile Include="Manager/Manager.LineBuilding.cs" />
+    <Compile Include="Manager/Manager.BusSpawnHealth.cs" />
     <Compile Include="Manager/Manager.BusLaneRecommendations.cs" />
     <Compile Include="Manager/Manager.RoadUpgrades.cs" />
     <Compile Include="Manager/Manager.Maintenance.cs" />

@@ -337,6 +337,11 @@ namespace AutoPublicTransit
                 AutoPublicTransitUI.UpdateScanSummary(scanSummary);
                 AutoPublicTransitUI.ShowTransitVehicleSpawnDelayDialogIfNeeded(scanSummary);
                 AutoPublicTransitUI.ShowDepotShortageDialog(busEconomicsSummary);
+                if (scanSummary.CreatedLineIds != null && scanSummary.CreatedLineIds.Count > 0)
+                {
+                    State.LastBusSpawnHealthSummary = null;
+                    StartCoroutine(CheckGeneratedBusSpawnHealthDeferred(scanSummary));
+                }
             }
             catch (Exception e)
             {

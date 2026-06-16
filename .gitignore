@@ -9,9 +9,6 @@ COMPATIBILITY_WATCHLIST_LOCAL.md
 # Local build/deploy scripts
 build+deploy.sh
 
-# macOS metadata
-.DS_Store
-
 # Build outputs
 bin/
 obj/
@@ -38,3 +35,5 @@ scripts/
 !*Mod/**/*.cs
 !*Mod/**/*.csproj
 !*Mod/**/descriptor.xml
+*Mod/**/bin/**
+*Mod/**/obj/**

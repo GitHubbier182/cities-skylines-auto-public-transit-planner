@@ -174,28 +174,28 @@ namespace AutoPublicTransit
             }
 
             float circuity = length / span;
-            if (circuity > 2.35f)
+            if (circuity > 3.35f)
             {
                 reason = "too-circuitous";
                 return true;
             }
 
             int crossings = CountSegmentCrossings(normalized);
-            if (crossings > 0)
+            if (crossings > Mathf.Max(2, normalized.Count / 3))
             {
                 reason = "self-crossing";
                 return true;
             }
 
             int reversals = CountSharpReversals(normalized);
-            if (reversals > 1)
+            if (reversals > 3)
             {
                 reason = "sharp-reversals";
                 return true;
             }
 
             int nearRepeats = CountNearRepeats(normalized, Mathf.Max(60f, cfg.GridCellSize * 0.5f));
-            if (nearRepeats > Mathf.Max(1, normalized.Count / 5))
+            if (nearRepeats > Mathf.Max(2, normalized.Count / 3))
             {
                 reason = "repeated-stops";
                 return true;

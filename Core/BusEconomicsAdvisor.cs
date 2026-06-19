@@ -44,7 +44,7 @@ namespace AutoPublicTransit
             for (int i = 0; i < busLines.Count; i++)
             {
                 ExistingLineSnapshot snapshot = busLines[i];
-                if (snapshot == null)
+                if (snapshot == null || snapshot.IsProtectedFromAptManagement)
                     continue;
 
                 ushort lineId = snapshot.LineId;

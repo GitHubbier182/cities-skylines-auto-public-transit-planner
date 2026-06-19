@@ -102,6 +102,14 @@ namespace AutoPublicTransit
             if (purpose == DemandNodePurpose.TouristAnchor)
                 return 2;
 
+            if (purpose == DemandNodePurpose.Residential ||
+                purpose == DemandNodePurpose.Commercial ||
+                purpose == DemandNodePurpose.Office ||
+                purpose == DemandNodePurpose.Industrial)
+            {
+                return 1;
+            }
+
             return 0;
         }
 

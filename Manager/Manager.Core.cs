@@ -18,6 +18,7 @@ namespace AutoPublicTransit
         private bool _hotkeyLatch;
         private bool _scanRunning;
         private bool _roadUpgradeRunning;
+        private uint _nextActiveDepotDispatchCheckFrame;
         private readonly TransitRouteBuilder _routeBuilder = new TransitRouteBuilder();
 
         private void Awake()
@@ -47,6 +48,7 @@ namespace AutoPublicTransit
             }
 
             _hotkeyLatch = togglePressed;
+            UpdateActiveDepotDispatchMonitor();
         }
 
         public void RunScan()
@@ -66,14 +68,15 @@ namespace AutoPublicTransit
 
             try
             {
+                ConfigManager.ApplyLockedBusPlanningProfile();
                 var cfg = ConfigManager.Config;
-                scanSummary.QuickScanMode = cfg.QuickScanMode;
                 DateTime startedAt = DateTime.UtcNow;
                 DateTime stageStartedAt = startedAt;
                 var transitHubs = CollectTransitHubs(cfg);
                 scanSummary.TransitHubCount = transitHubs.Count;
                 LogScanStage("collect transit hubs", ref stageStartedAt);
                 var touristAnchors = CollectTouristAnchors();
+                var touristAnchorPositions = GetTouristAnchorPositions(touristAnchors);
                 scanSummary.TouristAnchorCount = touristAnchors.Count;
                 LogScanStage("collect tourist anchors", ref stageStartedAt);
                 var stopLocator = new BusStopLocator(cfg.AvoidHighways, cfg.GridCellSize);
@@ -87,7 +90,7 @@ namespace AutoPublicTransit
                 scanSummary.RejectedCollapsedStopSegments = stopLocator.RejectedCollapsedSegments;
                 scanSummary.RejectedMissingNodeStopSegments = stopLocator.RejectedMissingNodeSegments;
                 RepairPublishedBusStopNodes("pre-scan");
-                var existingLines = MaintainExistingBusNetwork(cfg, transitHubs, touristAnchors, stopLocator, scanSummary);
+                var existingLines = MaintainExistingBusNetwork(cfg, transitHubs, touristAnchorPositions, stopLocator, scanSummary);
                 LogScanStage("maintain existing bus network", ref stageStartedAt);
                 var demandGrid = new DemandGrid(cfg.GridCellSize);
                 var demandMap = new Dictionary<ushort, int>();
@@ -98,13 +101,9 @@ namespace AutoPublicTransit
                 int eligibleBuildings = 0;
                 int scannedBuildings = 0;
                 int sampledBuildings = 0;
-                int quickSkippedBuildings = 0;
                 int stopSearchFailures = 0;
                 int zeroWeightBuildings = 0;
                 int coverageDiscountedBuildings = 0;
-                int quickScanStride = GetQuickScanStride(cfg);
-                scanSummary.QuickScanStride = quickScanStride;
-                LogScanStage("compute demand sampling stride", ref stageStartedAt);
                 List<Vector3> existingStops = FlattenStops(existingLines);
 
                 BuildingManager bm = BuildingManager.instance;
@@ -120,13 +119,6 @@ namespace AutoPublicTransit
                         continue;
 
                     eligibleBuildings++;
-
-                    if (quickScanStride > 1 && (id % quickScanStride) != 0)
-                    {
-                        quickSkippedBuildings++;
-                        continue;
-                    }
-
                     scannedBuildings++;
 
                     Vector3 pos = b.m_position;
@@ -170,7 +162,7 @@ namespace AutoPublicTransit
                         continue;
                     }
 
-                    demandGrid.AddSample(pos, stopMatch, weight);
+                    demandGrid.AddSample(pos, stopMatch, weight, GetDemandNodePurpose(ref b));
                     demandMap[id] = weight;
                     candidateStops++;
                     sampledBuildings++;
@@ -184,10 +176,7 @@ namespace AutoPublicTransit
 
                 TransitLogging.Verbose("Demand-scored buildings: " + demandMap.Count);
                 TransitLogging.Log("Valid stop candidates: " + candidateStops);
-                if (cfg.QuickScanMode)
-                    TransitLogging.Log("Sampled demand pass considered " + scannedBuildings + " of " + eligibleBuildings + " eligible buildings at stride " + quickScanStride + "; skipped " + quickSkippedBuildings + " by stride.");
-                else
-                    TransitLogging.Log("Full demand pass considered " + scannedBuildings + " eligible buildings.");
+                TransitLogging.Log("Full city demand pass considered " + scannedBuildings + " of " + eligibleBuildings + " eligible buildings.");
                 TransitLogging.Log(
                     "Demand filters: accepted=" + sampledBuildings +
                     ", zeroWeight=" + zeroWeightBuildings +
@@ -203,7 +192,6 @@ namespace AutoPublicTransit
                 TransitLogging.Log("Tourist anchors considered: " + touristAnchors.Count);
                 scanSummary.EligibleBuildings = eligibleBuildings;
                 scanSummary.ScannedBuildings = scannedBuildings;
-                scanSummary.QuickSkippedBuildings = quickSkippedBuildings;
                 scanSummary.ValidStopCandidates = candidateStops;
                 scanSummary.AcceptedDemandBuildings = sampledBuildings;
                 scanSummary.ZeroWeightBuildings = zeroWeightBuildings;
@@ -226,7 +214,13 @@ namespace AutoPublicTransit
                 TransitLogging.Log("Built routes: " + routes.Count);
                 TransitLogging.Log(
                     "Planner link diagnostics: locationFallbacks=" + _routeBuilder.LocationFallbackLinkCount +
-                    ", roadGraphRejected=" + _routeBuilder.RoadGraphRejectedLinkCount + ".");
+                    ", roadGraphRejected=" + _routeBuilder.RoadGraphRejectedLinkCount +
+                    ", touristCoverageRoutes=" + _routeBuilder.TouristCoverageRouteCount +
+                    ", mandatoryHubStops=" + _routeBuilder.MandatoryTransitHubInsertionCount +
+                    ", mandatoryHubMisses=" + _routeBuilder.MandatoryTransitHubMissCount +
+                    ", secondPassConnectorStops=" + _routeBuilder.RouteConnectorInsertionCount +
+                    ", secondPassConnectedRoutes=" + _routeBuilder.RouteConnectorConnectedRouteCount +
+                    ", unconnectedRoutesRejected=" + _routeBuilder.RouteConnectorRejectedRouteCount + ".");
                 LogGeneratedRoutePurposeSummary(routes, nodes, scanSummary);
 
                 State.LastDemandMap = demandMap;
@@ -237,7 +231,7 @@ namespace AutoPublicTransit
                 LogScanStage("ensure depot coverage", ref stageStartedAt);
                 List<GeneratedLineProbe> generatedLineProbes = BuildGeneratedLineProbes(routes, existingLines, cfg, stopLocator, scanSummary);
                 LogScanStage("apply generated bus lines", ref stageStartedAt);
-                StartCoroutine(FinalizeScanAfterGeneratedLineSettlement(generatedLineProbes, existingLines, cfg, stopLocator, scanSummary, startedAt, stageStartedAt));
+                StartCoroutine(FinalizeScanAfterGeneratedLineSettlement(generatedLineProbes, existingLines, nodes, transitHubs, cfg, stopLocator, scanSummary, startedAt, stageStartedAt));
             }
             catch (Exception e)
             {
@@ -252,49 +246,70 @@ namespace AutoPublicTransit
         private System.Collections.IEnumerator FinalizeScanAfterGeneratedLineSettlement(
             List<GeneratedLineProbe> generatedLineProbes,
             List<ExistingLineSnapshot> existingLines,
+            List<DemandNode> nodes,
+            List<Vector3> transitHubs,
             AutoPublicTransitConfig cfg,
             BusStopLocator stopLocator,
             TransitScanSummary scanSummary,
             DateTime startedAt,
             DateTime stageStartedAt)
         {
-            if (generatedLineProbes != null && generatedLineProbes.Count > 0)
+            yield return StartCoroutine(SettleGeneratedLineProbes(generatedLineProbes, existingLines, cfg, stopLocator, scanSummary, "settling generated paths", 5, 3));
+            if (!_scanRunning)
+                yield break;
+
+            const int maxCoverageBackfillRounds = 3;
+            for (int backfillRound = 1; backfillRound <= maxCoverageBackfillRounds; backfillRound++)
             {
-                AutoPublicTransitUI.UpdateScanStatus("Last scan: settling generated paths");
-
-                for (int pass = 1; pass <= 5; pass++)
+                LogPublishedCoverageAudit("pre-backfill round " + backfillRound, nodes, existingLines, transitHubs, cfg);
+                List<List<Vector3>> coverageBackfillRoutes = _routeBuilder.BuildCoverageBackfillRoutes(nodes, existingLines, transitHubs, cfg, stopLocator);
+                if (coverageBackfillRoutes.Count > 0)
                 {
-                    for (int frame = 0; frame < 45; frame++)
-                        yield return null;
+                    TransitLogging.Log(
+                        "Coverage backfill round " + backfillRound +
+                        " planned " + coverageBackfillRoutes.Count +
+                        " route(s) for " + _routeBuilder.CoverageBackfillUncoveredNodeCount +
+                        " uncovered demand node(s) after published-line settlement using " +
+                        _routeBuilder.CoverageBackfillConnectorCount + " connector node(s), connectedLines=" +
+                        _routeBuilder.CoverageBackfillConnectedLineCount +
+                        ", isolatedLines=" + _routeBuilder.CoverageBackfillUnconnectedLineCount +
+                        ", strategicFallbackRoutes=" + _routeBuilder.CoverageBackfillStrategicFallbackRouteCount + ".");
 
-                    bool requireSettledPaths = pass >= 3;
-                    bool allowRetry = pass < 5;
-                    int changed;
-                    bool failed = false;
-                    try
-                    {
-                        changed = ReconcileGeneratedLineProbes(generatedLineProbes, existingLines, cfg, stopLocator, pass, requireSettledPaths, !allowRetry, scanSummary);
-                    }
-                    catch (Exception e)
-                    {
-                        FailScanAfterAsyncError(scanSummary, e);
-                        changed = 0;
-                        failed = true;
-                    }
-
-                    if (failed)
+                    int createdBeforeBackfill = scanSummary != null ? scanSummary.CreatedLines : 0;
+                    List<GeneratedLineProbe> coverageBackfillProbes = BuildGeneratedLineProbes(coverageBackfillRoutes, existingLines, cfg, stopLocator, scanSummary, false);
+                    yield return StartCoroutine(SettleGeneratedLineProbes(coverageBackfillProbes, existingLines, cfg, stopLocator, scanSummary, "settling coverage backfill round " + backfillRound, 4, 2));
+                    if (!_scanRunning)
                         yield break;
 
-                    if (changed > 0)
-                    {
-                        TransitLogging.Log("Generated bus-line probe sweep pass " + pass + " reconciled " + changed + " candidate routes after path settling.");
-                        AutoPublicTransitUI.UpdateScanSummary(scanSummary);
-                    }
+                    LogScanStage("coverage backfill round " + backfillRound, ref stageStartedAt);
+                    LogPublishedCoverageAudit("post-backfill round " + backfillRound, nodes, existingLines, transitHubs, cfg);
 
-                    if (generatedLineProbes.Count == 0)
+                    int createdThisBackfill = (scanSummary != null ? scanSummary.CreatedLines : 0) - createdBeforeBackfill;
+                    if (createdThisBackfill <= 0)
                         break;
+
+                    continue;
                 }
+
+                if (_routeBuilder.CoverageBackfillUncoveredNodeCount > 0)
+                {
+                    TransitLogging.Log(
+                        "Coverage backfill round " + backfillRound +
+                        " found " + _routeBuilder.CoverageBackfillUncoveredNodeCount +
+                        " uncovered demand node(s), but no connected local route candidates survived planning using " +
+                        _routeBuilder.CoverageBackfillConnectorCount + " connector node(s), connectedLines=" +
+                        _routeBuilder.CoverageBackfillConnectedLineCount +
+                        ", isolatedLines=" + _routeBuilder.CoverageBackfillUnconnectedLineCount +
+                        ", strategicFallbackRoutes=" + _routeBuilder.CoverageBackfillStrategicFallbackRouteCount + ".");
+                }
+                else
+                {
+                    TransitLogging.Log("Coverage backfill found no uncovered demand nodes after published-line settlement.");
+                }
+
+                break;
             }
+            LogPublishedCoverageAudit("final post-backfill", nodes, existingLines, transitHubs, cfg);
 
             bool finalizeFailed = false;
             try
@@ -303,13 +318,18 @@ namespace AutoPublicTransit
                 LogBusLineVisibilityAudit();
                 RepairPublishedBusStopNodes("post-settlement");
                 LogBusStopPublicationAudit();
-                RefreshPublicTransportOverviewPanels("post-publish immediate");
+                RefreshPublicTransportOverviewPanels("post-publish immediate", true);
                 StartCoroutine(RefreshPublicTransportOverviewPanelsDeferred());
                 BusEconomicsSummary busEconomicsSummary = new BusEconomicsAdvisor().BuildSummary(existingLines);
                 scanSummary.BusEconomicsSummary = busEconomicsSummary;
                 State.LastBusEconomicsSummary = busEconomicsSummary;
                 LogBusEconomicsSummary(busEconomicsSummary);
                 LogScanStage("build bus economics summary", ref stageStartedAt);
+                List<DepotPlacementRecommendation> depotPlacementRecommendations = BuildDepotPlacementRecommendations(existingLines, cfg, stopLocator, busEconomicsSummary);
+                scanSummary.DepotPlacementRecommendationCount = depotPlacementRecommendations.Count;
+                State.LastDepotPlacementRecommendations = depotPlacementRecommendations;
+                LogDepotPlacementRecommendations(depotPlacementRecommendations, busEconomicsSummary);
+                LogScanStage("build depot placement advisory", ref stageStartedAt);
                 List<BusLaneUpgradeRecommendation> busLaneRecommendations;
                 if (AutoPublicTransitConfig.BusLaneRoadUpgradesPlayerEnabled)
                 {
@@ -333,9 +353,17 @@ namespace AutoPublicTransit
                 scanSummary.Completed = true;
                 State.LastScanSummary = scanSummary;
                 TransitLogging.Log("Transit scan took " + elapsed.TotalSeconds.ToString("0.0") + "s.");
+                if (scanSummary.GeneratedUnsafeVehicleModelsDetected > 0 ||
+                    scanSummary.GeneratedVehicleModelsRepaired > 0 ||
+                    scanSummary.GeneratedLinesWithoutSafeCityBusVehicle > 0)
+                {
+                    TransitLogging.Log(
+                        "Generated bus vehicle model audit: unsafeOrMissingDetected=" + scanSummary.GeneratedUnsafeVehicleModelsDetected +
+                        ", repaired=" + scanSummary.GeneratedVehicleModelsRepaired +
+                        ", withoutSafeCityBus=" + scanSummary.GeneratedLinesWithoutSafeCityBusVehicle + ".");
+                }
                 TransitLogging.Log("Transit scan completed.");
                 AutoPublicTransitUI.UpdateScanSummary(scanSummary);
-                AutoPublicTransitUI.ShowTransitVehicleSpawnDelayDialogIfNeeded(scanSummary);
                 AutoPublicTransitUI.ShowDepotShortageDialog(busEconomicsSummary);
                 if (scanSummary.CreatedLineIds != null && scanSummary.CreatedLineIds.Count > 0)
                 {
@@ -353,6 +381,357 @@ namespace AutoPublicTransit
                 yield break;
 
             _scanRunning = false;
+        }
+
+        private System.Collections.IEnumerator SettleGeneratedLineProbes(
+            List<GeneratedLineProbe> generatedLineProbes,
+            List<ExistingLineSnapshot> existingLines,
+            AutoPublicTransitConfig cfg,
+            BusStopLocator stopLocator,
+            TransitScanSummary scanSummary,
+            string statusText,
+            int maxPasses,
+            int requireSettledPathsPass)
+        {
+            if (generatedLineProbes == null || generatedLineProbes.Count == 0)
+                yield break;
+
+            AutoPublicTransitUI.UpdateScanStatus("Last scan: " + statusText);
+
+            for (int pass = 1; pass <= maxPasses; pass++)
+            {
+                if (!_scanRunning)
+                {
+                    ReleasePendingGeneratedLineProbes(generatedLineProbes, "scan cancelled before " + statusText);
+                    yield break;
+                }
+
+                for (int frame = 0; frame < 45; frame++)
+                {
+                    if (!_scanRunning)
+                    {
+                        ReleasePendingGeneratedLineProbes(generatedLineProbes, "scan cancelled during " + statusText);
+                        yield break;
+                    }
+
+                    yield return null;
+                }
+
+                bool requireSettledPaths = pass >= requireSettledPathsPass;
+                bool allowRetry = pass < maxPasses;
+                int changed;
+                try
+                {
+                    changed = ReconcileGeneratedLineProbes(generatedLineProbes, existingLines, cfg, stopLocator, pass, requireSettledPaths, !allowRetry, scanSummary);
+                }
+                catch (Exception e)
+                {
+                    FailScanAfterAsyncError(scanSummary, e);
+                    yield break;
+                }
+
+                if (changed > 0)
+                {
+                    TransitLogging.Log("Generated bus-line probe sweep (" + statusText + ") pass " + pass + " reconciled " + changed + " candidate routes after path settling.");
+                    AutoPublicTransitUI.UpdateScanSummary(scanSummary);
+                }
+
+                if (generatedLineProbes.Count == 0)
+                    break;
+            }
+        }
+
+        private void ReleasePendingGeneratedLineProbes(List<GeneratedLineProbe> generatedLineProbes, string reason)
+        {
+            if (generatedLineProbes == null || generatedLineProbes.Count == 0)
+                return;
+
+            int released = 0;
+            for (int i = 0; i < generatedLineProbes.Count; i++)
+            {
+                GeneratedLineProbe probe = generatedLineProbes[i];
+                if (probe == null || probe.ProbeLineId == 0)
+                    continue;
+
+                SafeReleaseLine(probe.ProbeLineId);
+                released++;
+            }
+
+            generatedLineProbes.Clear();
+            TransitLogging.Log("Released " + released + " pending generated bus-line probe(s) because " + reason + ".");
+        }
+
+        private void LogPublishedCoverageAudit(
+            string reason,
+            List<DemandNode> nodes,
+            List<ExistingLineSnapshot> existingLines,
+            List<Vector3> transitHubs,
+            AutoPublicTransitConfig cfg)
+        {
+            int totalNodes = nodes != null ? nodes.Count : 0;
+            int coveredNodes = 0;
+            int transitHubNodes = 0;
+            int coveredTransitHubNodes = 0;
+            int touristNodes = 0;
+            int coveredTouristNodes = 0;
+            int residentialNodes = 0;
+            int coveredResidentialNodes = 0;
+            int workOrShoppingNodes = 0;
+            int coveredWorkOrShoppingNodes = 0;
+            var missedStrategicSamples = new List<string>();
+            var missedLocalSamples = new List<string>();
+            bool[] connectedPublishedLines = BuildPublishedCoverageAuditConnectionMask(existingLines, transitHubs, cfg);
+
+            if (nodes != null)
+            {
+                for (int i = 0; i < nodes.Count; i++)
+                {
+                    bool covered = IsDemandNodeCoveredByPublishedLines(nodes[i], existingLines, connectedPublishedLines, cfg);
+                    bool transitHub = DemandNodePurpose.HasPurpose(nodes[i], DemandNodePurpose.TransitHub);
+                    bool tourist = DemandNodePurpose.HasPurpose(nodes[i], DemandNodePurpose.TouristAnchor);
+                    bool residential = DemandNodePurpose.HasPurpose(nodes[i], DemandNodePurpose.Residential);
+                    bool workOrShopping = DemandNodePurpose.HasAnyPurpose(nodes[i], DemandNodePurpose.WorkOrShoppingMask);
+
+                    if (covered)
+                        coveredNodes++;
+
+                    if (transitHub)
+                    {
+                        transitHubNodes++;
+                        if (covered)
+                            coveredTransitHubNodes++;
+                    }
+
+                    if (tourist)
+                    {
+                        touristNodes++;
+                        if (covered)
+                            coveredTouristNodes++;
+                    }
+
+                    if (residential)
+                    {
+                        residentialNodes++;
+                        if (covered)
+                            coveredResidentialNodes++;
+                    }
+
+                    if (workOrShopping)
+                    {
+                        workOrShoppingNodes++;
+                        if (covered)
+                            coveredWorkOrShoppingNodes++;
+                    }
+
+                    if (!covered && (transitHub || tourist) && missedStrategicSamples.Count < 8)
+                    {
+                        missedStrategicSamples.Add(
+                            GetStrategicSampleLabel(transitHub, tourist) +
+                            "@(" + nodes[i].StopPosition.x.ToString("0", CultureInfo.InvariantCulture) +
+                            "," + nodes[i].StopPosition.z.ToString("0", CultureInfo.InvariantCulture) +
+                            ") demand=" + nodes[i].Demand);
+                    }
+
+                    if (!covered && !transitHub && !tourist && (residential || workOrShopping) && missedLocalSamples.Count < 8)
+                    {
+                        missedLocalSamples.Add(
+                            GetLocalSampleLabel(residential, workOrShopping) +
+                            "@(" + nodes[i].StopPosition.x.ToString("0", CultureInfo.InvariantCulture) +
+                            "," + nodes[i].StopPosition.z.ToString("0", CultureInfo.InvariantCulture) +
+                            ") demand=" + nodes[i].Demand);
+                    }
+                }
+            }
+
+            int lineCount = existingLines != null ? existingLines.Count : 0;
+            int hubLinkedLines = 0;
+            int busTransferLinkedLines = 0;
+            int connectedLines = 0;
+            int isolatedLines = 0;
+            for (int i = 0; i < lineCount; i++)
+            {
+                bool hubLinked = IsPublishedLineNearAnyPosition(existingLines[i], transitHubs, GetPublishedCoverageAuditHubTransferDistance(cfg));
+                bool busLinked = IsPublishedLineNearAnotherLine(i, existingLines, GetPublishedCoverageAuditBusTransferDistance(cfg));
+                if (hubLinked)
+                    hubLinkedLines++;
+                if (busLinked)
+                    busTransferLinkedLines++;
+
+                if (connectedPublishedLines != null && i < connectedPublishedLines.Length && connectedPublishedLines[i])
+                    connectedLines++;
+                else
+                    isolatedLines++;
+            }
+
+            TransitLogging.Log(
+                "Post-publish mandatory hub coverage audit (" + reason + "): demandNodes=" + totalNodes +
+                ", covered=" + coveredNodes +
+                ", missed=" + Mathf.Max(0, totalNodes - coveredNodes) +
+                ", hubNodes=" + transitHubNodes +
+                ", hubCovered=" + coveredTransitHubNodes +
+                ", hubMissed=" + Mathf.Max(0, transitHubNodes - coveredTransitHubNodes) +
+                ", touristNodes=" + touristNodes +
+                ", touristCovered=" + coveredTouristNodes +
+                ", touristMissed=" + Mathf.Max(0, touristNodes - coveredTouristNodes) +
+                ", residentialNodes=" + residentialNodes +
+                ", residentialCovered=" + coveredResidentialNodes +
+                ", residentialMissed=" + Mathf.Max(0, residentialNodes - coveredResidentialNodes) +
+                ", workOrShoppingNodes=" + workOrShoppingNodes +
+                ", workOrShoppingCovered=" + coveredWorkOrShoppingNodes +
+                ", workOrShoppingMissed=" + Mathf.Max(0, workOrShoppingNodes - coveredWorkOrShoppingNodes) +
+                ", publishedBusLines=" + lineCount +
+                ", connectedLines=" + connectedLines +
+                ", isolatedLines=" + isolatedLines +
+                ", hubLinkedLines=" + hubLinkedLines +
+                ", busTransferLinkedLines=" + busTransferLinkedLines + ".");
+
+            if (missedStrategicSamples.Count > 0)
+                TransitLogging.Log("Post-publish missed strategic coverage samples (" + reason + "): " + string.Join("; ", missedStrategicSamples.ToArray()) + ".");
+
+            if (missedLocalSamples.Count > 0)
+                TransitLogging.Log("Post-publish missed local coverage samples (" + reason + "): " + string.Join("; ", missedLocalSamples.ToArray()) + ".");
+        }
+
+        private bool[] BuildPublishedCoverageAuditConnectionMask(List<ExistingLineSnapshot> existingLines, List<Vector3> transitHubs, AutoPublicTransitConfig cfg)
+        {
+            int lineCount = existingLines != null ? existingLines.Count : 0;
+            var connectedLines = new bool[lineCount];
+            bool hasTransitHubs = transitHubs != null && transitHubs.Count > 0;
+            bool allowSingleIslandLine = lineCount <= 1 && !hasTransitHubs;
+
+            for (int i = 0; i < lineCount; i++)
+            {
+                connectedLines[i] =
+                    allowSingleIslandLine ||
+                    IsPublishedLineNearAnyPosition(existingLines[i], transitHubs, GetPublishedCoverageAuditHubTransferDistance(cfg)) ||
+                    IsPublishedLineNearAnotherLine(i, existingLines, GetPublishedCoverageAuditBusTransferDistance(cfg));
+            }
+
+            return connectedLines;
+        }
+
+        private string GetStrategicSampleLabel(bool transitHub, bool tourist)
+        {
+            if (transitHub && tourist)
+                return "hub+tourist";
+
+            if (transitHub)
+                return "hub";
+
+            return "tourist";
+        }
+
+        private string GetLocalSampleLabel(bool residential, bool workOrShopping)
+        {
+            if (residential && workOrShopping)
+                return "residential+workOrShopping";
+
+            if (residential)
+                return "residential";
+
+            return "workOrShopping";
+        }
+
+        private bool IsDemandNodeCoveredByPublishedLines(DemandNode node, List<ExistingLineSnapshot> existingLines, bool[] connectedPublishedLines, AutoPublicTransitConfig cfg)
+        {
+            if (existingLines == null)
+                return false;
+
+            float coverageDistance = GetPublishedCoverageAuditDistance(node, cfg);
+            for (int i = 0; i < existingLines.Count; i++)
+            {
+                if (connectedPublishedLines != null && i < connectedPublishedLines.Length && !connectedPublishedLines[i])
+                    continue;
+
+                ExistingLineSnapshot line = existingLines[i];
+                if (line == null || line.Stops == null)
+                    continue;
+
+                if (IsAnyPositionNear(line.Stops, node.StopPosition, coverageDistance))
+                    return true;
+            }
+
+            return false;
+        }
+
+        private float GetPublishedCoverageAuditDistance(DemandNode node, AutoPublicTransitConfig cfg)
+        {
+            if (DemandNodePurpose.HasPurpose(node, DemandNodePurpose.TouristAnchor))
+                return Mathf.Max(95f, cfg.MaxWalkingDistance * 0.65f);
+
+            if (DemandNodePurpose.HasPurpose(node, DemandNodePurpose.TransitHub))
+                return Mathf.Max(110f, cfg.MaxWalkingDistance * 0.75f);
+
+            return Mathf.Max(130f, cfg.MaxWalkingDistance * 0.9f);
+        }
+
+        private bool IsPublishedLineNearAnyPosition(ExistingLineSnapshot line, List<Vector3> positions, float maxDistance)
+        {
+            if (line == null || line.Stops == null || positions == null)
+                return false;
+
+            for (int i = 0; i < positions.Count; i++)
+            {
+                if (IsAnyPositionNear(line.Stops, positions[i], maxDistance))
+                    return true;
+            }
+
+            return false;
+        }
+
+        private bool IsPublishedLineNearAnotherLine(int lineIndex, List<ExistingLineSnapshot> existingLines, float maxDistance)
+        {
+            if (existingLines == null || lineIndex < 0 || lineIndex >= existingLines.Count)
+                return false;
+
+            ExistingLineSnapshot line = existingLines[lineIndex];
+            if (line == null || line.Stops == null)
+                return false;
+
+            for (int otherIndex = 0; otherIndex < existingLines.Count; otherIndex++)
+            {
+                if (otherIndex == lineIndex)
+                    continue;
+
+                ExistingLineSnapshot other = existingLines[otherIndex];
+                if (other == null || other.Stops == null)
+                    continue;
+
+                for (int i = 0; i < other.Stops.Count; i++)
+                {
+                    if (IsAnyPositionNear(line.Stops, other.Stops[i], maxDistance))
+                        return true;
+                }
+            }
+
+            return false;
+        }
+
+        private bool IsAnyPositionNear(List<Vector3> positions, Vector3 target, float maxDistance)
+        {
+            if (positions == null)
+                return false;
+
+            float maxSqr = maxDistance * maxDistance;
+            for (int i = 0; i < positions.Count; i++)
+            {
+                float dx = positions[i].x - target.x;
+                float dz = positions[i].z - target.z;
+                if (dx * dx + dz * dz <= maxSqr)
+                    return true;
+            }
+
+            return false;
+        }
+
+        private float GetPublishedCoverageAuditHubTransferDistance(AutoPublicTransitConfig cfg)
+        {
+            return Mathf.Max(130f, cfg.MaxWalkingDistance * 0.75f);
+        }
+
+        private float GetPublishedCoverageAuditBusTransferDistance(AutoPublicTransitConfig cfg)
+        {
+            return Mathf.Max(70f, Mathf.Min(cfg.MaxWalkingDistance * 0.45f, cfg.GridCellSize * 0.55f));
         }
 
         private void FailScanAfterAsyncError(TransitScanSummary scanSummary, Exception e)
@@ -420,6 +799,8 @@ namespace AutoPublicTransit
         {
             int hubNodes = 0;
             int touristNodes = 0;
+            int residentialNodes = 0;
+            int workOrShoppingNodes = 0;
             int strategicNodes = 0;
             int dualStrategicNodes = 0;
 
@@ -429,10 +810,16 @@ namespace AutoPublicTransit
                 {
                     bool hub = DemandNodePurpose.HasPurpose(nodes[i], DemandNodePurpose.TransitHub);
                     bool tourist = DemandNodePurpose.HasPurpose(nodes[i], DemandNodePurpose.TouristAnchor);
+                    bool residential = DemandNodePurpose.HasPurpose(nodes[i], DemandNodePurpose.Residential);
+                    bool workOrShopping = DemandNodePurpose.HasAnyPurpose(nodes[i], DemandNodePurpose.WorkOrShoppingMask);
                     if (hub)
                         hubNodes++;
                     if (tourist)
                         touristNodes++;
+                    if (residential)
+                        residentialNodes++;
+                    if (workOrShopping)
+                        workOrShoppingNodes++;
                     if (hub || tourist)
                         strategicNodes++;
                     if (hub && tourist)
@@ -452,6 +839,8 @@ namespace AutoPublicTransit
                 "Demand node mix: strategic=" + strategicNodes +
                 ", transitHub=" + hubNodes +
                 ", tourist=" + touristNodes +
+                ", residential=" + residentialNodes +
+                ", workOrShopping=" + workOrShoppingNodes +
                 ", both=" + dualStrategicNodes + ".");
         }
 
@@ -460,6 +849,8 @@ namespace AutoPublicTransit
             int strategicRoutes = 0;
             int hubRoutes = 0;
             int touristRoutes = 0;
+            int residentialRoutes = 0;
+            int workOrShoppingRoutes = 0;
             int totalRoutes = routes != null ? routes.Count : 0;
 
             if (routes != null && nodes != null)
@@ -468,6 +859,8 @@ namespace AutoPublicTransit
                 {
                     bool routeHasHub = false;
                     bool routeHasTourist = false;
+                    bool routeHasResidential = false;
+                    bool routeHasWorkOrShopping = false;
                     List<Vector3> route = routes[i];
 
                     for (int j = 0; j < route.Count; j++)
@@ -481,12 +874,20 @@ namespace AutoPublicTransit
                             routeHasHub = true;
                         if (DemandNodePurpose.HasPurpose(node, DemandNodePurpose.TouristAnchor))
                             routeHasTourist = true;
+                        if (DemandNodePurpose.HasPurpose(node, DemandNodePurpose.Residential))
+                            routeHasResidential = true;
+                        if (DemandNodePurpose.HasAnyPurpose(node, DemandNodePurpose.WorkOrShoppingMask))
+                            routeHasWorkOrShopping = true;
                     }
 
                     if (routeHasHub)
                         hubRoutes++;
                     if (routeHasTourist)
                         touristRoutes++;
+                    if (routeHasResidential)
+                        residentialRoutes++;
+                    if (routeHasWorkOrShopping)
+                        workOrShoppingRoutes++;
                     if (routeHasHub || routeHasTourist)
                         strategicRoutes++;
                 }
@@ -503,6 +904,8 @@ namespace AutoPublicTransit
                 "Generated route mix: strategic=" + strategicRoutes +
                 ", transitHub=" + hubRoutes +
                 ", tourist=" + touristRoutes +
+                ", residential=" + residentialRoutes +
+                ", workOrShopping=" + workOrShoppingRoutes +
                 ", normalOnly=" + Mathf.Max(0, totalRoutes - strategicRoutes) +
                 " of " + totalRoutes + " candidates.");
         }

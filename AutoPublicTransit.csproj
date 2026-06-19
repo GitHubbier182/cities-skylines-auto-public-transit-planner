@@ -66,12 +66,17 @@
     <Compile Include="Routing/TransitRouteBuilder.cs" />
     <Compile Include="UI/UIHelpers.cs" />
     <Compile Include="UI/AutoPublicTransitUI.cs" />
+    <Compile Include="UI/AutoPublicTransitV2WelcomePanel.cs" />
     <Compile Include="UI/UnifiedTransitLauncherToolbar.cs" />
     <Compile Include="UI/AutoPublicTransitLauncherButton.cs" />
     <Compile Include="Lifecycle/AutoPublicTransitLoading.cs" />
     <Compile Include="Lifecycle/AutoPublicTransitThreading.cs" />
     <Compile Include="Manager/Manager.Core.cs" />
     <Compile Include="Manager/Manager.LineBuilding.cs" />
+    <Compile Include="Manager/Manager.LineTools.cs" />
+    <Compile Include="Manager/Manager.LineProtection.cs" />
+    <Compile Include="Manager/Manager.SchoolBusCompatibility.cs" />
+    <Compile Include="Manager/Manager.VehicleCompatibility.cs" />
     <Compile Include="Manager/Manager.BusSpawnHealth.cs" />
     <Compile Include="Manager/Manager.BusLaneRecommendations.cs" />
     <Compile Include="Manager/Manager.RoadUpgrades.cs" />

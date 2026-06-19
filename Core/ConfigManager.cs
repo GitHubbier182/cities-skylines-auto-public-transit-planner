@@ -16,6 +16,7 @@ namespace AutoPublicTransit
             Path.Combine(Application.dataPath, "AutoPublicTransitConfig.json");
 
         public static AutoPublicTransitConfig Config { get; private set; } = new AutoPublicTransitConfig();
+        public static bool IsLoaded { get; private set; }
 
         public static void Load()
         {
@@ -28,10 +29,16 @@ namespace AutoPublicTransit
                     if (cfg != null)
                         Config = cfg;
                 }
+
+                ApplyLockedBusPlanningProfile();
             }
             catch (Exception e)
             {
                 Debug.LogError("[AutoPublicTransit] Failed to load config: " + e);
+            }
+            finally
+            {
+                IsLoaded = true;
             }
         }
 
@@ -39,6 +46,7 @@ namespace AutoPublicTransit
         {
             try
             {
+                ApplyLockedBusPlanningProfile();
                 string json = JsonUtility.ToJson(Config, true);
                 File.WriteAllText(ConfigPath, json);
             }
@@ -46,6 +54,21 @@ namespace AutoPublicTransit
             {
                 Debug.LogError("[AutoPublicTransit] Failed to save config: " + e);
             }
+        }
+
+        public static void EnsureLoaded()
+        {
+            if (!IsLoaded)
+                Load();
+        }
+
+        public static void ApplyLockedBusPlanningProfile()
+        {
+            if (Config == null)
+                Config = new AutoPublicTransitConfig();
+
+            if (!AutoPublicTransitConfig.PlayerBusPlanningOverridesEnabled)
+                Config.ApplyLockedBusPlanningProfile();
         }
     }
 }

@@ -23,7 +23,7 @@ namespace AutoPublicTransit
         public const int DefaultDemandThreshold = 5;
         public const float DefaultGridCellSize = 200f;
         public const bool DefaultLinkToOtherTransit = true;
-        public const bool DefaultQuickScanMode = true;
+        public static readonly bool PlayerBusPlanningOverridesEnabled = false;
 
         public int MinStopsPerRoute = DefaultMinStopsPerRoute;
         public int MaxStopsPerRoute = DefaultMaxStopsPerRoute;
@@ -34,7 +34,6 @@ namespace AutoPublicTransit
         public float GridCellSize = DefaultGridCellSize;
         public bool AvoidHighways = true;
         public bool LinkToOtherTransit = DefaultLinkToOtherTransit;
-        public bool QuickScanMode = DefaultQuickScanMode;
         public bool EnableBusLaneRecommendations = false;
         public int BusLaneRouteThreshold = 2;
         public int BusLaneTrafficDensityThreshold = 75;
@@ -44,8 +43,14 @@ namespace AutoPublicTransit
         public float LauncherButtonY = 96f;
         public bool EnableDebugLogging = false;
         public bool ShowDebugOverlay = false;
+        public string ShownReleaseNoticeId = "";
 
         public void ResetActiveBusPlanningSettings()
+        {
+            ApplyLockedBusPlanningProfile();
+        }
+
+        public void ApplyLockedBusPlanningProfile()
         {
             MaxWalkingDistance = DefaultMaxWalkingDistance;
             MaxRoadDistance = DefaultMaxRoadDistance;
@@ -54,8 +59,8 @@ namespace AutoPublicTransit
             GridCellSize = DefaultGridCellSize;
             MinStopsPerRoute = DefaultMinStopsPerRoute;
             MaxStopsPerRoute = DefaultMaxStopsPerRoute;
+            AvoidHighways = true;
             LinkToOtherTransit = DefaultLinkToOtherTransit;
-            QuickScanMode = DefaultQuickScanMode;
         }
 
         public bool HasRiskyBusPlanningSettings(out string reason)
@@ -67,12 +72,6 @@ namespace AutoPublicTransit
             {
                 reasons.Add("minimum stops is greater than maximum stops");
                 riskScore += 4;
-            }
-
-            if (!QuickScanMode)
-            {
-                reasons.Add("full scan mode");
-                riskScore += 2;
             }
 
             if (DemandThreshold <= 2)

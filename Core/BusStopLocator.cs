@@ -42,6 +42,12 @@ namespace AutoPublicTransit
             public float Cost;
         }
 
+        private class StopMatchCandidate
+        {
+            public CachedStopMatch Match;
+            public float Score;
+        }
+
         public BusStopLocator(bool avoidHighways, float cellSize)
         {
             _avoidHighways = avoidHighways;
@@ -116,6 +122,74 @@ namespace AutoPublicTransit
             }
 
             return bestSqr < maxSqr && match.SegmentId != 0;
+        }
+
+        public List<CachedStopMatch> GetNearbyBusStopMatches(Vector3 pos, float maxDistance, int maxCount, float minSpacing)
+        {
+            var matches = new List<CachedStopMatch>();
+            if (_segmentsByCell.Count == 0 || maxCount <= 0)
+                return matches;
+
+            NetManager nm = NetManager.instance;
+            float maxSqr = maxDistance * maxDistance;
+            int minX = Mathf.FloorToInt((pos.x - maxDistance) / _cellSize);
+            int maxX = Mathf.FloorToInt((pos.x + maxDistance) / _cellSize);
+            int minZ = Mathf.FloorToInt((pos.z - maxDistance) / _cellSize);
+            int maxZ = Mathf.FloorToInt((pos.z + maxDistance) / _cellSize);
+            var checkedSegments = new HashSet<ushort>();
+            var candidates = new List<StopMatchCandidate>();
+
+            for (int x = minX; x <= maxX; x++)
+            {
+                for (int z = minZ; z <= maxZ; z++)
+                {
+                    List<ushort> segmentIds;
+                    if (!_segmentsByCell.TryGetValue(Key(x, z), out segmentIds))
+                        continue;
+
+                    for (int i = 0; i < segmentIds.Count; i++)
+                    {
+                        ushort segmentId = segmentIds[i];
+                        if (!checkedSegments.Add(segmentId))
+                            continue;
+
+                        CachedStopMatch candidateMatch;
+                        float candidateSqr;
+                        float candidateScore;
+                        if (!TryGetStopMatchOnSegment(nm, segmentId, pos, maxSqr, out candidateMatch, out candidateSqr, out candidateScore))
+                            continue;
+
+                        candidates.Add(new StopMatchCandidate
+                        {
+                            Match = candidateMatch,
+                            Score = candidateScore
+                        });
+                    }
+                }
+            }
+
+            candidates.Sort((a, b) => a.Score.CompareTo(b.Score));
+            float minSpacingSqr = minSpacing * minSpacing;
+            for (int i = 0; i < candidates.Count && matches.Count < maxCount; i++)
+            {
+                CachedStopMatch candidate = candidates[i].Match;
+                bool tooClose = false;
+                for (int j = 0; j < matches.Count; j++)
+                {
+                    float dx = candidate.StopPosition.x - matches[j].StopPosition.x;
+                    float dz = candidate.StopPosition.z - matches[j].StopPosition.z;
+                    if (dx * dx + dz * dz < minSpacingSqr)
+                    {
+                        tooClose = true;
+                        break;
+                    }
+                }
+
+                if (!tooClose)
+                    matches.Add(candidate);
+            }
+
+            return matches;
         }
 
         public bool IsCachedBusStopStillValid(CachedStopMatch cached)
@@ -507,8 +581,6 @@ namespace AutoPublicTransit
         private float GetStopPlacementPenalty(NetInfo info, ushort segmentId)
         {
             float penalty = 0f;
-            if (!HasOpposingVehicleLanes(info))
-                penalty += 180f;
 
             List<ushort> neighbors;
             if (!_neighborsBySegment.TryGetValue(segmentId, out neighbors) || neighbors.Count <= 1)
@@ -519,14 +591,6 @@ namespace AutoPublicTransit
                 penalty += 260f;
 
             return penalty;
-        }
-
-        private bool HasOpposingVehicleLanes(NetInfo info)
-        {
-            bool forward = false;
-            bool backward = false;
-            GetVehicleTravelDirections(info, out forward, out backward);
-            return forward && backward;
         }
 
         private void GetVehicleTravelDirections(NetInfo info, out bool forward, out bool backward)

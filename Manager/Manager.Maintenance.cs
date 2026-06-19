@@ -31,8 +31,12 @@ namespace AutoPublicTransit
                     continue;
 
                 TransportInfo info = line.Info;
-                if (info != null && info.m_transportType == TransportInfo.TransportType.Bus)
+                if (info != null &&
+                    info.m_transportType == TransportInfo.TransportType.Bus &&
+                    !IsProtectedSchoolBusRoute(lineId, ref line))
+                {
                     return true;
+                }
             }
 
             return false;
@@ -59,6 +63,21 @@ namespace AutoPublicTransit
                 if (info == null || info.m_transportType != TransportInfo.TransportType.Bus)
                     continue;
 
+                bool protectedSchoolBusRoute = IsProtectedSchoolBusRoute(lineId, ref line);
+                bool playerProtectedLine = IsPlayerProtectedLine(lineId, ref line);
+                List<Vector3> stops = GetExistingLineStops(ref line);
+                if (protectedSchoolBusRoute || playerProtectedLine)
+                {
+                    if (protectedSchoolBusRoute)
+                        stats.ProtectedSchoolBusLines++;
+                    if (playerProtectedLine)
+                        stats.PlayerProtectedLines++;
+                    if (stops.Count > 0)
+                        existingLines.Add(BuildCoverageOnlyLineSnapshot(lineId, stops, protectedSchoolBusRoute, playerProtectedLine));
+
+                    continue;
+                }
+
                 if ((line.m_flags & (TransportLine.Flags.Temporary | TransportLine.Flags.Hidden)) == (TransportLine.Flags.Temporary | TransportLine.Flags.Hidden))
                 {
                     SafeReleaseLine(lineId);
@@ -68,7 +87,6 @@ namespace AutoPublicTransit
                     continue;
                 }
 
-                List<Vector3> stops = GetExistingLineStops(ref line);
                 string integrityFailure;
                 if (TryGetExistingLineIntegrityFailure(ref line, lineId, stops, cfg, stopLocator, out integrityFailure))
                 {
@@ -141,6 +159,10 @@ namespace AutoPublicTransit
                 TransitLogging.Log("Broken bus-line paths found on " + stats.BrokenPathLines + " retained-line candidates; live lines were refreshed and retained.");
             if (stats.ComplexShapeLines > 0)
                 TransitLogging.Log("Overly complex bus-line shapes found on " + stats.ComplexShapeLines + " retained-line candidates; live lines were retained for advisory rebuild.");
+            if (stats.ProtectedSchoolBusLines > 0)
+                TransitLogging.Log("Protected " + stats.ProtectedSchoolBusLines + " school bus route(s) as coverage-only external service.");
+            if (stats.PlayerProtectedLines > 0)
+                TransitLogging.Log("Protected " + stats.PlayerProtectedLines + " DND-marked player bus line(s) as coverage-only service.");
             TransitLogging.Log(
                 "Maintenance ridership decisions: keptByRidership=" + stats.RidershipProtectedLines +
                 ", keptByStrategicValue=" + stats.StrategicProtectedLines +
@@ -295,6 +317,18 @@ namespace AutoPublicTransit
             };
         }
 
+        private ExistingLineSnapshot BuildCoverageOnlyLineSnapshot(ushort lineId, List<Vector3> stops, bool protectedSchoolBusRoute, bool playerProtectedLine)
+        {
+            return new ExistingLineSnapshot
+            {
+                LineId = lineId,
+                Stops = stops ?? new List<Vector3>(),
+                TotalLength = stops != null && stops.Count >= 2 ? ComputeRouteLength(stops) : 0f,
+                IsProtectedSchoolBusRoute = protectedSchoolBusRoute,
+                IsPlayerProtectedLine = playerProtectedLine
+            };
+        }
+
         private string DescribeLineForMaintenance(ushort lineId, int stopCount)
         {
             try
@@ -406,6 +440,9 @@ namespace AutoPublicTransit
             for (int i = 0; i < existingLines.Count; i++)
             {
                 ExistingLineSnapshot candidate = existingLines[i];
+                if (!IsManagedExistingLine(candidate))
+                    continue;
+
                 if (!IsWeakDuplicateCandidate(candidate, cfg))
                     continue;
 
@@ -415,6 +452,9 @@ namespace AutoPublicTransit
                         continue;
 
                     ExistingLineSnapshot other = existingLines[j];
+                    if (!IsManagedExistingLine(other))
+                        continue;
+
                     if (!IsStrongerDuplicateLine(candidate, other, cfg))
                         continue;
 
@@ -463,7 +503,7 @@ namespace AutoPublicTransit
             if (stops == null || stops.Count < 2)
                 return false;
 
-            float maxDistance = Mathf.Max(48f, cfg.MaxWalkingDistance * 0.25f);
+            float maxDistance = Mathf.Max(180f, cfg.MaxWalkingDistance * 0.85f);
             for (int i = 0; i < stops.Count; i++)
             {
                 if (!stopLocator.IsValidBusStopPosition(stops[i], maxDistance))
@@ -679,6 +719,9 @@ namespace AutoPublicTransit
 
             for (int i = 0; i < existingLines.Count; i++)
             {
+                if (!IsManagedExistingLine(existingLines[i]))
+                    continue;
+
                 List<Vector3> existingStops = existingLines[i].Stops;
                 int overlappingStops = 0;
 
@@ -781,6 +824,8 @@ namespace AutoPublicTransit
             public int StrategicProtectedLines;
             public int WeakOversuppliedLines;
             public int RidershipProtectedStops;
+            public int ProtectedSchoolBusLines;
+            public int PlayerProtectedLines;
         }
 
         private struct LineMaintenanceProfile

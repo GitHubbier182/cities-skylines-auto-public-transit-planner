@@ -19,5 +19,12 @@ namespace AutoPublicTransit
         public int AverageRidership;
         public int VehicleCount;
         public int StrategicStopCount;
+        public bool IsProtectedSchoolBusRoute;
+        public bool IsPlayerProtectedLine;
+
+        public bool IsProtectedFromAptManagement
+        {
+            get { return IsProtectedSchoolBusRoute || IsPlayerProtectedLine; }
+        }
     }
 }

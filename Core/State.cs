@@ -19,9 +19,8 @@ namespace AutoPublicTransit
         public static BusEconomicsSummary LastBusEconomicsSummary;
         public static BusSpawnHealthSummary LastBusSpawnHealthSummary;
         public static List<BusLaneUpgradeRecommendation> LastBusLaneRecommendations = new List<BusLaneUpgradeRecommendation>();
+        public static List<DepotPlacementRecommendation> LastDepotPlacementRecommendations = new List<DepotPlacementRecommendation>();
         public static Dictionary<ushort, CachedStopMatch> StopCache = new Dictionary<ushort, CachedStopMatch>();
-        public static bool TransitVehicleSpawnDelayWarningShown;
-
         public static void ClearTransient()
         {
             HasScanRun = false;
@@ -31,9 +30,31 @@ namespace AutoPublicTransit
             LastBusEconomicsSummary = null;
             LastBusSpawnHealthSummary = null;
             LastBusLaneRecommendations = new List<BusLaneUpgradeRecommendation>();
+            LastDepotPlacementRecommendations = new List<DepotPlacementRecommendation>();
             StopCache.Clear();
-            TransitVehicleSpawnDelayWarningShown = false;
         }
+
+        public static bool HasBusDepotIssue()
+        {
+            return HasBusDepotIssue(LastBusSpawnHealthSummary);
+        }
+
+        public static bool HasBusDepotIssue(BusSpawnHealthSummary health)
+        {
+            return health != null && health.DepotDispatchPressureLikely;
+        }
+    }
+
+    public class DepotPlacementRecommendation
+    {
+        public int Rank;
+        public Vector3 Position;
+        public string RoadName;
+        public int NearbyLineCount;
+        public int NearbyStopCount;
+        public float AverageLineDistance;
+        public float DistanceToNearestDepot;
+        public string Reason;
     }
 
     public class BusLaneUpgradeRecommendation
@@ -84,12 +105,26 @@ namespace AutoPublicTransit
         public int AssignedVehicleCount;
         public int ActiveVehicleCount;
         public int WaitingPathVehicleCount;
+        public int ReturningToDepotVehicleCount;
+        public int VehicleShortfallCount;
+        public float AssignedVehicleRatio;
         public int LinesWithTargetVehicles;
         public int LinesWithoutVehicles;
         public int LinesBelowTarget;
         public int LinesOnlyWaitingPathVehicles;
+        public int UnsafeVehicleModelLineCount;
+        public int VehicleModelRepairCount;
+        public int LinesWithoutSafeCityBusVehicle;
+        public string VehicleModelIssueNames;
         public int DepotCount;
         public int DepotProblemCount;
+        public int DepotDispatchPressureVehicleCount;
+        public int WorstDepotNearbyBusCount;
+        public int DepotDispatchPressureConsecutiveJamScans;
+        public int DepotDispatchPressureConsecutiveClearScans;
+        public Vector3 WorstDepotPosition;
+        public bool DepotDispatchPressureLikely;
+        public bool ActiveNetworkMonitor;
         public bool TransitVehicleSpawnDelayActive;
         public bool TransitVehicleSpawnDelaySettingKnown;
         public uint TransitVehicleSpawnDelayBusDelay;
@@ -102,11 +137,8 @@ namespace AutoPublicTransit
         public bool Completed;
         public string FailureMessage;
         public float DurationSeconds;
-        public bool QuickScanMode;
-        public int QuickScanStride;
         public int EligibleBuildings;
         public int ScannedBuildings;
-        public int QuickSkippedBuildings;
         public int AcceptedDemandBuildings;
         public int ZeroWeightBuildings;
         public int AlreadyCoveredBuildings;
@@ -153,8 +185,12 @@ namespace AutoPublicTransit
         public int GeneratedRoutesIntegrityFailed;
         public int GeneratedStopsSkipped;
         public int ClosureBackoffs;
+        public int GeneratedVehicleModelsRepaired;
+        public int GeneratedUnsafeVehicleModelsDetected;
+        public int GeneratedLinesWithoutSafeCityBusVehicle;
         public List<ushort> CreatedLineIds = new List<ushort>();
         public int BusLaneRecommendationCount;
+        public int DepotPlacementRecommendationCount;
         public BusEconomicsSummary BusEconomicsSummary;
     }
 

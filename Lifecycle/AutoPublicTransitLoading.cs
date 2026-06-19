@@ -35,6 +35,7 @@ namespace AutoPublicTransit
                 {
                     view.AddUIComponent(typeof(AutoPublicTransitUI));
                     AutoPublicTransitLauncherButton.CreateIfNeeded(view);
+                    AutoPublicTransitV2WelcomePanel.ShowIfNeeded(view);
                 }
             }
         }
@@ -50,6 +51,7 @@ namespace AutoPublicTransit
             }
 
             AutoPublicTransitLauncherButton.DestroyInstance();
+            AutoPublicTransitV2WelcomePanel.DestroyInstance();
             AutoPublicTransitUI.DestroyInstance();
             State.ClearTransient();
         }

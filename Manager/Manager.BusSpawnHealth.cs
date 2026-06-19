@@ -10,6 +10,47 @@ namespace AutoPublicTransit
         private const uint BusSpawnHealthInitialDelayFrames = 2048u;
         private const uint BusSpawnHealthRetryDelayFrames = 2048u;
         private const int BusSpawnHealthMaxPasses = 3;
+        private const uint ActiveDepotDispatchMonitorIntervalFrames = 4096u;
+        private const float BusSpawnHealthDepotPressureRadius = 72f;
+        private const float BusSpawnHealthStandingVelocitySqr = 1f;
+        private const int BusSpawnHealthDepotQueueWarningCount = 5;
+        private const int BusSpawnHealthDepotPressureRequiredJamScans = 3;
+        private const int BusSpawnHealthDepotPressureClearScans = 3;
+        private int _depotPressureConsecutiveJamScans;
+        private int _depotPressureConsecutiveClearScans;
+        private bool _depotPressureSustained;
+
+        private class DepotAccessProbe
+        {
+            public Vector3 AccessPosition;
+        }
+
+        private void UpdateActiveDepotDispatchMonitor()
+        {
+            if (_scanRunning)
+                return;
+
+            SimulationManager sm = SimulationManager.instance;
+            if (sm == null)
+                return;
+
+            uint currentFrame = sm.m_currentFrameIndex;
+            if (_nextActiveDepotDispatchCheckFrame != 0 && unchecked(_nextActiveDepotDispatchCheckFrame - currentFrame) < 0x80000000u)
+                return;
+
+            _nextActiveDepotDispatchCheckFrame = currentFrame + ActiveDepotDispatchMonitorIntervalFrames;
+            BusSpawnHealthSummary health = BuildActiveBusNetworkHealthSummary(true);
+            if (health == null || health.CheckedLineCount == 0)
+            {
+                State.LastBusSpawnHealthSummary = health;
+                AutoPublicTransitUI.UpdateScanSummary(State.LastScanSummary);
+                return;
+            }
+
+            State.LastBusSpawnHealthSummary = health;
+            LogBusSpawnHealthSummary(health, 0);
+            AutoPublicTransitUI.UpdateScanSummary(State.LastScanSummary);
+        }
 
         private System.Collections.IEnumerator CheckGeneratedBusSpawnHealthDeferred(TransitScanSummary scanSummary)
         {
@@ -26,6 +67,7 @@ namespace AutoPublicTransit
                 health = BuildBusSpawnHealthSummary(lineIds);
                 State.LastBusSpawnHealthSummary = health;
                 LogBusSpawnHealthSummary(health, pass);
+                AutoPublicTransitUI.UpdateScanSummary(State.LastScanSummary);
 
                 if (health == null || !health.NeedsPlayerAttention)
                     yield break;
@@ -34,8 +76,6 @@ namespace AutoPublicTransit
                     yield return WaitForSimulationFrames(BusSpawnHealthRetryDelayFrames);
             }
 
-            if (health != null && health.NeedsPlayerAttention)
-                AutoPublicTransitUI.ShowBusSpawnHealthDialogIfNeeded(health);
         }
 
         private System.Collections.IEnumerator WaitForSimulationFrames(uint frames)
@@ -51,8 +91,73 @@ namespace AutoPublicTransit
 
         private BusSpawnHealthSummary BuildBusSpawnHealthSummary(List<ushort> lineIds)
         {
+            return BuildBusSpawnHealthSummary(lineIds, false);
+        }
+
+        private BusSpawnHealthSummary BuildActiveBusNetworkHealthSummary(bool advanceDepotPressureState)
+        {
+            return BuildBusSpawnHealthSummary(CollectCompleteBusLineIds(), true, advanceDepotPressureState);
+        }
+
+        public void RefreshActiveBusSpawnHealthForUi()
+        {
+            bool wasSustained = _depotPressureSustained;
+            BusSpawnHealthSummary health = BuildActiveBusNetworkHealthSummary(true);
+            State.LastBusSpawnHealthSummary = health;
+
+            if (health != null && health.DepotDispatchPressureLikely != wasSustained)
+            {
+                TransitLogging.Log(
+                    "Overview depot dispatch pressure changed: depotEntranceStandingBuses=" + health.DepotDispatchPressureVehicleCount +
+                    ", worstDepotEntranceStandingBuses=" + health.WorstDepotNearbyBusCount +
+                    ", depotPressureJamScans=" + health.DepotDispatchPressureConsecutiveJamScans +
+                    ", depotPressureClearScans=" + health.DepotDispatchPressureConsecutiveClearScans +
+                    ", depotDispatchPressure=" + health.DepotDispatchPressureLikely + ".");
+            }
+        }
+
+        private List<ushort> CollectCompleteBusLineIds()
+        {
+            var lineIds = new List<ushort>();
+            TransportManager tm = TransportManager.instance;
+            if (tm == null)
+                return lineIds;
+
+            for (ushort lineId = 1; lineId < tm.m_lines.m_size; lineId++)
+            {
+                ref TransportLine line = ref tm.m_lines.m_buffer[lineId];
+                if ((line.m_flags & TransportLine.Flags.Created) == 0)
+                    continue;
+
+                if ((line.m_flags & (TransportLine.Flags.Temporary | TransportLine.Flags.Hidden)) != 0)
+                    continue;
+
+                if (!line.Complete)
+                    continue;
+
+                TransportInfo info = line.Info;
+                if (info == null || info.m_transportType != TransportInfo.TransportType.Bus)
+                    continue;
+
+                if (IsProtectedFromAptManagement(lineId, ref line))
+                    continue;
+
+                lineIds.Add(lineId);
+            }
+
+            return lineIds;
+        }
+
+        private BusSpawnHealthSummary BuildBusSpawnHealthSummary(List<ushort> lineIds, bool activeNetworkMonitor)
+        {
+            return BuildBusSpawnHealthSummary(lineIds, activeNetworkMonitor, false);
+        }
+
+        private BusSpawnHealthSummary BuildBusSpawnHealthSummary(List<ushort> lineIds, bool activeNetworkMonitor, bool advanceDepotPressureState)
+        {
             var health = new BusSpawnHealthSummary();
             health.CreatedLineCount = lineIds != null ? lineIds.Count : 0;
+            health.ActiveNetworkMonitor = activeNetworkMonitor;
             health.DepotCount = CountBusDepotsForSpawnHealth(out health.DepotProblemCount);
 
             TransitVehicleSpawnDelayStatus spawnDelayStatus;
@@ -84,6 +189,9 @@ namespace AutoPublicTransit
                 if (info == null || info.m_transportType != TransportInfo.TransportType.Bus)
                     continue;
 
+                if (IsProtectedFromAptManagement(lineId, ref line))
+                    continue;
+
                 health.CheckedLineCount++;
                 if (line.Complete)
                     health.CompleteLineCount++;
@@ -91,12 +199,16 @@ namespace AutoPublicTransit
                 int targetVehicles = SafeCalculateTargetVehicleCount(ref line);
                 int assignedVehicles = SafeCountLineVehicles(ref line, lineId);
                 int waitingPathVehicles;
-                int activeVehicles = CountLineVehiclesByState(ref line, out waitingPathVehicles);
+                int returningToDepotVehicles;
+                int activeVehicles = CountLineVehiclesByState(ref line, out waitingPathVehicles, out returningToDepotVehicles);
+                BusLineVehicleAudit vehicleAudit = AuditBusLineVehicleSelection(lineId, ref line, !activeNetworkMonitor);
 
                 health.TargetVehicleCount += targetVehicles;
                 health.AssignedVehicleCount += assignedVehicles;
                 health.ActiveVehicleCount += activeVehicles;
                 health.WaitingPathVehicleCount += waitingPathVehicles;
+                health.ReturningToDepotVehicleCount += returningToDepotVehicles;
+                AddVehicleAuditToSpawnHealth(health, lineId, vehicleAudit);
 
                 if (targetVehicles > 0)
                 {
@@ -113,10 +225,231 @@ namespace AutoPublicTransit
                 }
             }
 
+            health.VehicleShortfallCount = Mathf.Max(0, health.TargetVehicleCount - health.AssignedVehicleCount);
+            health.AssignedVehicleRatio = health.TargetVehicleCount > 0
+                ? (float)health.AssignedVehicleCount / health.TargetVehicleCount
+                : 1f;
+            if (activeNetworkMonitor)
+                health.ReturningToDepotVehicleCount = Mathf.Max(
+                    health.ReturningToDepotVehicleCount,
+                    CountCitywideBusVehiclesReturningToDepots());
+            AddDepotDispatchPressureMetrics(health, advanceDepotPressureState);
             health.NeedsPlayerAttention = health.CheckedLineCount > 0 &&
-                (health.LinesWithoutVehicles > 0 || health.LinesOnlyWaitingPathVehicles > 0);
+                (health.LinesWithoutVehicles > 0 ||
+                 health.LinesOnlyWaitingPathVehicles > 0 ||
+                 health.UnsafeVehicleModelLineCount > 0 ||
+                 health.LinesWithoutSafeCityBusVehicle > 0 ||
+                 health.DepotDispatchPressureLikely);
             health.Recommendation = BuildBusSpawnHealthRecommendation(health);
             return health;
+        }
+
+        private void AddVehicleAuditToSpawnHealth(BusSpawnHealthSummary health, ushort lineId, BusLineVehicleAudit audit)
+        {
+            if (health == null || audit == null)
+                return;
+
+            if (audit.ReplacementApplied)
+                health.VehicleModelRepairCount++;
+
+            if (audit.NoSafeCityBusVehicle)
+            {
+                health.LinesWithoutSafeCityBusVehicle++;
+                health.VehicleModelIssueNames = AppendVehicleModelIssueName(health.VehicleModelIssueNames, audit.SelectedVehicleName);
+                TransitLogging.Warn(
+                    "Bus line " + lineId +
+                    " cannot be assigned an ordinary city bus model: " + audit.GetLogSummary() + ".");
+                return;
+            }
+
+            if (audit.HasUnresolvedIssue)
+            {
+                health.UnsafeVehicleModelLineCount++;
+                health.VehicleModelIssueNames = AppendVehicleModelIssueName(health.VehicleModelIssueNames, audit.SelectedVehicleName);
+                TransitLogging.Warn(
+                    "Bus line " + lineId +
+                    " has an unsafe or missing city bus vehicle model: " + audit.GetLogSummary() + ".");
+            }
+        }
+
+        private void AddDepotDispatchPressureMetrics(BusSpawnHealthSummary health, bool advanceDepotPressureState)
+        {
+            if (health == null)
+                return;
+
+            List<DepotAccessProbe> depotAccessProbes = CollectBusDepotAccessProbes();
+            health.DepotDispatchPressureVehicleCount = CountStandingBusVehiclesAtDepotEntrances(
+                depotAccessProbes,
+                out health.WorstDepotNearbyBusCount,
+                out health.WorstDepotPosition);
+            health.DepotDispatchPressureLikely = IsDepotDispatchPressureLikely(health, advanceDepotPressureState);
+            health.DepotDispatchPressureConsecutiveJamScans = _depotPressureConsecutiveJamScans;
+            health.DepotDispatchPressureConsecutiveClearScans = _depotPressureConsecutiveClearScans;
+        }
+
+        private bool IsDepotDispatchPressureLikely(BusSpawnHealthSummary health, bool advanceDepotPressureState)
+        {
+            if (health == null || health.DepotCount <= 0 || health.TargetVehicleCount <= 0)
+            {
+                if (advanceDepotPressureState)
+                    ResetDepotPressureStability();
+
+                return false;
+            }
+
+            bool jammedThisScan = health.WorstDepotNearbyBusCount > BusSpawnHealthDepotQueueWarningCount;
+            bool clearThisScan = health.WorstDepotNearbyBusCount < BusSpawnHealthDepotQueueWarningCount;
+            if (!advanceDepotPressureState)
+                return _depotPressureSustained;
+
+            if (jammedThisScan)
+            {
+                _depotPressureConsecutiveJamScans = Mathf.Min(
+                    BusSpawnHealthDepotPressureRequiredJamScans,
+                    _depotPressureConsecutiveJamScans + 1);
+                _depotPressureConsecutiveClearScans = 0;
+
+                if (_depotPressureConsecutiveJamScans >= BusSpawnHealthDepotPressureRequiredJamScans)
+                    _depotPressureSustained = true;
+            }
+            else if (clearThisScan)
+            {
+                _depotPressureConsecutiveClearScans = Mathf.Min(
+                    BusSpawnHealthDepotPressureClearScans,
+                    _depotPressureConsecutiveClearScans + 1);
+                _depotPressureConsecutiveJamScans = 0;
+                if (_depotPressureConsecutiveClearScans >= BusSpawnHealthDepotPressureClearScans)
+                {
+                    _depotPressureSustained = false;
+                    _depotPressureConsecutiveJamScans = 0;
+                }
+            }
+            else
+            {
+                _depotPressureConsecutiveJamScans = 0;
+                _depotPressureConsecutiveClearScans = 0;
+            }
+
+            return _depotPressureSustained;
+        }
+
+        private void ResetDepotPressureStability()
+        {
+            _depotPressureConsecutiveJamScans = 0;
+            _depotPressureConsecutiveClearScans = 0;
+            _depotPressureSustained = false;
+        }
+
+        private int CountStandingBusVehiclesAtDepotEntrances(List<DepotAccessProbe> depotAccessProbes, out int worstDepotNearbyBusCount, out Vector3 worstDepotPosition)
+        {
+            worstDepotNearbyBusCount = 0;
+            worstDepotPosition = Vector3.zero;
+            if (depotAccessProbes == null || depotAccessProbes.Count == 0)
+                return 0;
+
+            VehicleManager vm = VehicleManager.instance;
+            if (vm == null)
+                return 0;
+
+            var countsByDepot = new int[depotAccessProbes.Count];
+            float radiusSqr = BusSpawnHealthDepotPressureRadius * BusSpawnHealthDepotPressureRadius;
+
+            for (ushort vehicleId = 1; vehicleId < vm.m_vehicles.m_size; vehicleId++)
+            {
+                ref Vehicle vehicle = ref vm.m_vehicles.m_buffer[vehicleId];
+                if ((vehicle.m_flags & Vehicle.Flags.Created) == 0)
+                    continue;
+
+                if (!IsBusVehicle(ref vehicle))
+                    continue;
+
+                if (!IsStandingOutsideDepot(ref vehicle))
+                    continue;
+
+                Vector3 position = vehicle.GetLastFramePosition();
+                int nearestDepot = -1;
+                float nearestSqr = radiusSqr;
+                for (int i = 0; i < depotAccessProbes.Count; i++)
+                {
+                    float sqr = SqrDistanceXZ(position, depotAccessProbes[i].AccessPosition);
+                    if (sqr >= nearestSqr)
+                        continue;
+
+                    nearestSqr = sqr;
+                    nearestDepot = i;
+                }
+
+                if (nearestDepot >= 0)
+                    countsByDepot[nearestDepot]++;
+            }
+
+            int total = 0;
+            for (int i = 0; i < countsByDepot.Length; i++)
+            {
+                total += countsByDepot[i];
+                if (countsByDepot[i] <= worstDepotNearbyBusCount)
+                    continue;
+
+                worstDepotNearbyBusCount = countsByDepot[i];
+                worstDepotPosition = depotAccessProbes[i].AccessPosition;
+            }
+
+            return total;
+        }
+
+        private bool IsStandingOutsideDepot(ref Vehicle vehicle)
+        {
+            if ((vehicle.m_flags & Vehicle.Flags.Spawned) == 0)
+                return false;
+
+            if ((vehicle.m_flags & Vehicle.Flags.InsideBuilding) != 0)
+                return false;
+
+            if (vehicle.GetLastFrameVelocity().sqrMagnitude > BusSpawnHealthStandingVelocitySqr)
+                return false;
+
+            Vehicle.Flags stationaryFlags =
+                Vehicle.Flags.Stopped |
+                Vehicle.Flags.WaitingPath |
+                Vehicle.Flags.WaitingSpace |
+                Vehicle.Flags.WaitingTarget |
+                Vehicle.Flags.WaitingLoading |
+                Vehicle.Flags.Congestion;
+
+            return (vehicle.m_flags & stationaryFlags) != 0 ||
+                   vehicle.m_waitCounter >= 3 ||
+                   vehicle.m_blockCounter >= 2;
+        }
+
+        private bool IsBusVehicle(ref Vehicle vehicle)
+        {
+            if (vehicle.m_transportLine != 0)
+            {
+                TransportManager tm = TransportManager.instance;
+                if (tm != null && vehicle.m_transportLine < tm.m_lines.m_size)
+                {
+                    ref TransportLine line = ref tm.m_lines.m_buffer[vehicle.m_transportLine];
+                    if (IsProtectedFromAptManagement(vehicle.m_transportLine, ref line))
+                        return false;
+
+                    TransportInfo lineInfo = line.Info;
+                    if (lineInfo != null && lineInfo.m_transportType == TransportInfo.TransportType.Bus)
+                        return true;
+                }
+            }
+
+            VehicleInfo info = vehicle.Info;
+            return info != null &&
+                   info.m_class != null &&
+                   info.m_class.m_service == ItemClass.Service.PublicTransport &&
+                   info.m_class.m_subService == ItemClass.SubService.PublicTransportBus;
+        }
+
+        private float SqrDistanceXZ(Vector3 a, Vector3 b)
+        {
+            float dx = a.x - b.x;
+            float dz = a.z - b.z;
+            return dx * dx + dz * dz;
         }
 
         private int SafeCalculateTargetVehicleCount(ref TransportLine line)
@@ -143,9 +476,10 @@ namespace AutoPublicTransit
             }
         }
 
-        private int CountLineVehiclesByState(ref TransportLine line, out int waitingPathVehicles)
+        private int CountLineVehiclesByState(ref TransportLine line, out int waitingPathVehicles, out int returningToDepotVehicles)
         {
             waitingPathVehicles = 0;
+            returningToDepotVehicles = 0;
             VehicleManager vm = VehicleManager.instance;
             if (vm == null)
                 return 0;
@@ -159,10 +493,18 @@ namespace AutoPublicTransit
                 ushort nextVehicleId = vehicle.m_nextLineVehicle;
                 if ((vehicle.m_flags & Vehicle.Flags.Created) != 0)
                 {
-                    if ((vehicle.m_flags & Vehicle.Flags.WaitingPath) != 0)
+                    if (IsVehicleReturningToDepot(ref vehicle))
+                    {
+                        returningToDepotVehicles++;
+                    }
+                    else if ((vehicle.m_flags & Vehicle.Flags.WaitingPath) != 0)
+                    {
                         waitingPathVehicles++;
+                    }
                     else
+                    {
                         activeVehicles++;
+                    }
                 }
 
                 vehicleId = nextVehicleId;
@@ -177,6 +519,34 @@ namespace AutoPublicTransit
             return activeVehicles;
         }
 
+        private bool IsVehicleReturningToDepot(ref Vehicle vehicle)
+        {
+            return (vehicle.m_flags & Vehicle.Flags.GoingBack) != 0;
+        }
+
+        private int CountCitywideBusVehiclesReturningToDepots()
+        {
+            VehicleManager vm = VehicleManager.instance;
+            if (vm == null)
+                return 0;
+
+            int returning = 0;
+            for (ushort vehicleId = 1; vehicleId < vm.m_vehicles.m_size; vehicleId++)
+            {
+                ref Vehicle vehicle = ref vm.m_vehicles.m_buffer[vehicleId];
+                if ((vehicle.m_flags & Vehicle.Flags.Created) == 0)
+                    continue;
+
+                if (!IsBusVehicle(ref vehicle))
+                    continue;
+
+                if (IsVehicleReturningToDepot(ref vehicle))
+                    returning++;
+            }
+
+            return returning;
+        }
+
         private int CountBusDepotsForSpawnHealth(out int depotProblemCount)
         {
             depotProblemCount = 0;
@@ -188,16 +558,7 @@ namespace AutoPublicTransit
             for (ushort id = 1; id < bm.m_buildings.m_size; id++)
             {
                 ref Building building = ref bm.m_buildings.m_buffer[id];
-                if ((building.m_flags & Building.Flags.Created) == 0 || building.Info == null || building.Info.m_class == null)
-                    continue;
-
-                if (building.Info.m_class.m_service != ItemClass.Service.PublicTransport)
-                    continue;
-
-                if (building.Info.m_class.m_subService != ItemClass.SubService.PublicTransportBus)
-                    continue;
-
-                if (!(building.Info.m_buildingAI is DepotAI))
+                if (!IsCreatedBusDepot(ref building))
                     continue;
 
                 depotCount++;
@@ -208,6 +569,56 @@ namespace AutoPublicTransit
             return depotCount;
         }
 
+        private List<DepotAccessProbe> CollectBusDepotAccessProbes()
+        {
+            var probes = new List<DepotAccessProbe>();
+            BuildingManager bm = BuildingManager.instance;
+            if (bm == null)
+                return probes;
+
+            for (ushort id = 1; id < bm.m_buildings.m_size; id++)
+            {
+                ref Building building = ref bm.m_buildings.m_buffer[id];
+                if (!IsCreatedBusDepot(ref building))
+                    continue;
+
+                probes.Add(new DepotAccessProbe
+                {
+                    AccessPosition = GetDepotAccessPosition(ref building)
+                });
+            }
+
+            return probes;
+        }
+
+        private bool IsCreatedBusDepot(ref Building building)
+        {
+            return (building.m_flags & Building.Flags.Created) != 0 &&
+                   building.Info != null &&
+                   building.Info.m_class != null &&
+                   building.Info.m_class.m_service == ItemClass.Service.PublicTransport &&
+                   building.Info.m_class.m_subService == ItemClass.SubService.PublicTransportBus &&
+                   building.Info.m_buildingAI is DepotAI;
+        }
+
+        private Vector3 GetDepotAccessPosition(ref Building building)
+        {
+            NetManager nm = NetManager.instance;
+            ushort segmentId = building.m_accessSegment;
+            if (nm == null || segmentId == 0 || segmentId >= nm.m_segments.m_size)
+                return building.m_position;
+
+            ref NetSegment segment = ref nm.m_segments.m_buffer[segmentId];
+            if ((segment.m_flags & NetSegment.Flags.Created) == 0)
+                return building.m_position;
+
+            Vector3 accessPosition = segment.GetClosestPosition(building.m_position);
+            if (float.IsNaN(accessPosition.x) || float.IsNaN(accessPosition.z))
+                return building.m_position;
+
+            return accessPosition;
+        }
+
         private string BuildBusSpawnHealthRecommendation(BusSpawnHealthSummary health)
         {
             if (health == null)
@@ -216,12 +627,26 @@ namespace AutoPublicTransit
             if (health.DepotCount <= 0)
                 return "No working bus depot was found. Add or enable a bus depot before expecting new APT lines to dispatch buses.";
 
+            if (health.LinesWithoutSafeCityBusVehicle > 0)
+                return "APT found generated bus lines that have no compatible ordinary city bus model. Disable coach/intercity-only bus assets for normal bus lines, or enable at least one ordinary city bus model.";
+
+            if (health.UnsafeVehicleModelLineCount > 0)
+                return "APT found generated bus lines still selected to use an unsafe coach/intercity-style vehicle model. Change those lines to an ordinary city bus model in the line vehicle selector.";
+
             if (health.LinesWithoutVehicles > 0 && health.TransitVehicleSpawnDelayActive)
             {
                 if (health.TransitVehicleSpawnDelaySettingKnown)
                     return "Transit Vehicle Spawn Delay is active with BusDelay=" + health.TransitVehicleSpawnDelayBusDelay.ToString(CultureInfo.InvariantCulture) + ". Set its Bus spawning delay to 1 or lower until the new lines receive their first buses.";
 
                 return "Transit Vehicle Spawn Delay is active, but APT could not read its bus delay setting. Temporarily lower or disable that mod's bus spawning delay until the new lines receive their first buses.";
+            }
+
+            if (health.DepotDispatchPressureLikely)
+            {
+                if (health.ActiveNetworkMonitor)
+                    return "APT's active depot monitor sees buses standing outside a depot entrance. A new depot can help future buses spawn from a clearer location, but buses already queued at this depot still need the exit or traffic jam to clear. Add or move depot capacity near the busiest line clusters, and keep depot exits off congested roads.";
+
+                return "APT created complete lines, but dispatch is far below target and buses are standing outside a depot entrance. A new depot can help future buses spawn from a clearer location, but buses already queued at this depot still need the exit or traffic jam to clear. Add or move depot capacity near the busiest line clusters, and keep depot exits off congested roads.";
             }
 
             if (health.LinesWithoutVehicles > 0)
@@ -251,7 +676,7 @@ namespace AutoPublicTransit
                 : "inactive";
 
             TransitLogging.Log(
-                "Bus spawn health pass " + pass +
+                (pass > 0 ? "Bus spawn health pass " + pass : "Active depot dispatch monitor") +
                 ": createdLines=" + health.CreatedLineCount +
                 ", checkedLines=" + health.CheckedLineCount +
                 ", completeLines=" + health.CompleteLineCount +
@@ -261,10 +686,22 @@ namespace AutoPublicTransit
                 ", assignedVehicles=" + health.AssignedVehicleCount +
                 ", activeVehicles=" + health.ActiveVehicleCount +
                 ", waitingPathVehicles=" + health.WaitingPathVehicleCount +
+                ", returningToDepotVehicles=" + health.ReturningToDepotVehicleCount +
+                ", vehicleShortfall=" + health.VehicleShortfallCount +
+                ", assignedVehicleRatio=" + health.AssignedVehicleRatio.ToString("0.00", CultureInfo.InvariantCulture) +
                 ", linesWithTargets=" + health.LinesWithTargetVehicles +
                 ", linesWithoutVehicles=" + health.LinesWithoutVehicles +
                 ", linesBelowTarget=" + health.LinesBelowTarget +
                 ", linesOnlyWaitingPath=" + health.LinesOnlyWaitingPathVehicles +
+                ", unsafeVehicleModelLines=" + health.UnsafeVehicleModelLineCount +
+                ", vehicleModelRepairs=" + health.VehicleModelRepairCount +
+                ", linesWithoutSafeCityBusVehicle=" + health.LinesWithoutSafeCityBusVehicle +
+                ", vehicleModelIssueNames=" + (string.IsNullOrEmpty(health.VehicleModelIssueNames) ? "none" : health.VehicleModelIssueNames) +
+                ", depotEntranceStandingBuses=" + health.DepotDispatchPressureVehicleCount +
+                ", worstDepotEntranceStandingBuses=" + health.WorstDepotNearbyBusCount +
+                ", depotPressureJamScans=" + health.DepotDispatchPressureConsecutiveJamScans +
+                ", depotPressureClearScans=" + health.DepotDispatchPressureConsecutiveClearScans +
+                ", depotDispatchPressure=" + health.DepotDispatchPressureLikely +
                 ", transitVehicleSpawnDelay=" + spawnDelay +
                 ".");
 

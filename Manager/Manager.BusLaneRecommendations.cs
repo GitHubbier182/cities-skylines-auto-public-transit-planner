@@ -90,7 +90,7 @@ namespace AutoPublicTransit
             for (int i = 0; i < busLines.Count; i++)
             {
                 ExistingLineSnapshot line = busLines[i];
-                if (line == null || line.Stops == null || line.Stops.Count < 2)
+                if (line == null || line.IsProtectedFromAptManagement || line.Stops == null || line.Stops.Count < 2)
                     continue;
 
                 for (int j = 0; j < line.Stops.Count; j++)

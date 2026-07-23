@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ModMetaData>
+  <name>Auto Public Transit Planner</name>
+  <author>ScratchyBald</author>
+  <version>2.3.1</version>
+  <assembly>AutoPublicTransit.dll</assembly>
+  <description>Builds bus routes from city demand and separately creates Metro and passenger Train lines over player-built stations and tracks. Cargo rail is excluded.</description>
+  <url></url>
+  <tags>Transport;Automation;Bus;Metro;Train;Transit;Planning;Public Transport</tags>
+  <enabled>true</enabled>
+  <supportedVersions>
+    <version>1.0</version>
+  </supportedVersions>
+</ModMetaData>
